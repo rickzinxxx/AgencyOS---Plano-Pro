@@ -1,0 +1,6 @@
+{
+  "name": "AgencyOS",
+  "description": "Sistema financeiro corporativo inteligente com IA autônoma e sarcástica Zelda-OS, integração WhatsApp, modo offline e relatórios em PDF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
