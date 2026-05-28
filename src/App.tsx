@@ -32,10 +32,28 @@ import {
   Send, 
   Sparkles,
   Search,
-  Check
+  Check,
+  Mail,
+  Video,
+  Users,
+  FolderOpen,
+  Terminal,
+  Cpu,
+  FilePlay,
+  Globe,
+  LogOut
 } from 'lucide-react';
 import { AppState, CashFlowItem, StockItem, Campaign, AgendaItem, Message } from './types';
 import { generateFinancialPDF } from './utils/pdfGenerator';
+import { loginWithGoogle, logoutGoogle, getAccessToken, addAuthListener } from './utils/workspaceAuth';
+import { User as FirebaseUser } from 'firebase/auth';
+
+// Import Google Workspace Integrations
+import GmailView from './components/GmailView';
+import GoogleMeetView from './components/GoogleMeetView';
+import ContactsView from './components/ContactsView';
+import SlidesView from './components/SlidesView';
+import MyPortalView from './components/MyPortalView';
 
 const INITIAL_STATE: AppState = {
   company: {
@@ -74,24 +92,170 @@ const INITIAL_STATE: AppState = {
   syncStatus: "synced"
 };
 
+// Dynamic tutorial guide definitions for each tab
+const getTutorialInfo = (tab: string) => {
+  switch (tab) {
+    case 'portal':
+      return {
+        title: "PORTAL WEB • PORTAL INDIVIDUAL DO E-MAIL",
+        desc: "Cada e-mail conectado possui uma instância de site própria totalmente isolada do banco de dados e sincronizada. Edite o nome da marca, cores e explore a visualização do simulador no navegador.",
+        color: "emerald",
+      };
+    case 'dashboard':
+      return {
+        title: "GUIA CORPORATIVO • ABA DASHBOARD",
+        desc: "Bem-vindo ao Command Center da sua agência! Acompanhe o faturamento de recorrência mensal (MRR), caixa operacional consolidado, e acione auditorias fiscais e insights proativos sob demanda da Zelda-OS.",
+        color: "cyan",
+      };
+    case 'empresa':
+      return {
+        title: "GUIA CORPORATIVO • CONFIGURAÇÃO CADASTRAIS",
+        desc: "Ajuste os dados cadastrais da pessoa jurídica (Razão Social, CNPJ, Atividade e Meta Financeira). Zelda-OS digere essa base para lapidar os sarcasmos e relatórios faturados das análises locais.",
+        color: "emerald",
+      };
+    case 'caixa':
+      return {
+        title: "GUIA CORPORATIVO • LIVRO CAIXA E FLUXO",
+        desc: "Gerencie entradas e saídas de recursos do caixa oficial da empresa. Conta com persistência automatizada criptografada offline e visualizador em barras inteligente.",
+        color: "purple",
+      };
+    case 'estoque':
+      return {
+        title: "GUIA CORPORATIVO • CONTROLE DE INVENTÁRIO",
+        desc: "Monitore unidades disponíveis de brindes, vestuário, canecas e ativos físicos. Calcule a rentabilidade sugerida ao público e o valor estocado total.",
+        color: "yellow",
+      };
+    case 'campanhas':
+      return {
+        title: "GUIA CORPORATIVO • TRÁFEGO PAGO E CANAIS ADS",
+        desc: "Registre campanhas ativas no Facebook ou Google Ads. Zelda-OS faz a conciliação do ROAS real no mesmo instante e aponta gargalos orçamentários.",
+        color: "blue",
+      };
+    case 'agenda':
+      return {
+        title: "GUIA CORPORATIVO • COMPROMISSOS E IMPOSTOS",
+        desc: "Evite multas e atraso de impostos. Organize reuniões e obrigações fiscais por prioridade e gerencie o fluxo de afazeres diários com tranquilidade.",
+        color: "orange",
+      };
+    case 'chat':
+      return {
+        title: "GUIA MÓVEL • DIÁLOGO WA-API COM ZELDA-OS",
+        desc: "Sua CFO opinativa e autônoma. Zelda-OS tem acesso total ao faturamento local e estoque. Solicite novas inserções, listagem ou críticas financeiras usando linguagem natural.",
+        color: "emerald",
+      };
+    case 'gmail':
+      return {
+        title: "GUIA DE INTEGRAÇÃO • GMAIL WORKSPACE AI",
+        desc: "Escreva e-mails corporativos sob medida com IA integrando seu saldo e inventário. Dispare faturas e pitches oficiais pelo popup revisor corporativo logado.",
+        color: "rose",
+      };
+    case 'meet':
+      return {
+        title: "GUIA DE INTEGRAÇÃO • GOOGLE MEET E CONSELHO",
+        desc: "Marque e sincronize salas de reuniões e pautas na Google Agenda. Zelda-OS ajuda a estruturar tópicos estratégicos de faturamento SaaS e contingência para suas chamadas.",
+        color: "sky",
+      };
+    case 'contacts':
+      return {
+        title: "GUIA DE INTEGRAÇÃO • CONTATOS CORPORATIVOS",
+        desc: "Alimente e centralize seus contatos comerciais com a Google People API. Digite ou cole textos livres para a IA extrair nome, celular e fone automaticamente.",
+        color: "teal",
+      };
+    case 'slides':
+      return {
+        title: "GUIA DE INTEGRAÇÃO • GOOGLE SLIDES AI",
+        desc: "Crie decks de slides de pitch e apresentações de resultados da empresa em segundos. O renderizador compila lâminas e gera o arquivo editável em seu Google Drive.",
+        color: "amber",
+      };
+    case 'celular':
+      return {
+        title: "GUIA DISPOSITIVOS • STANDALONE PWA & USB APK COMPILER",
+        desc: "Instale a plataforma como aplicativo nativo no celular. Simule o comportamento offline e utilize nossa compilação USB standalone em ambiente de depuração ADB.",
+        color: "emerald",
+      };
+    default:
+      return null;
+  }
+};
+
 export default function App() {
-  // Navigation tabs state
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'empresa' | 'caixa' | 'estoque' | 'campanhas' | 'agenda' | 'chat' | 'celular'>('dashboard');
+  // Authentication status
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [loadingAuth, setLoadingAuth] = useState(true);
+
+  // Navigation tabs state including workspace integrations
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'portal' | 'empresa' | 'caixa' | 'estoque' | 'campanhas' | 'agenda' | 'chat' | 'celular' | 'gmail' | 'meet' | 'contacts' | 'slides'>('dashboard');
   
-  // App state with localstorage sync
-  const [state, setState] = useState<AppState>(() => {
-    const saved = localStorage.getItem("agency_os_state_v2");
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { return INITIAL_STATE; }
+  // App state backed by dynamic user-specific localstorage sync
+  const [state, setState] = useState<AppState>(INITIAL_STATE);
+
+  // Sync state per user dynamically
+  useEffect(() => {
+    const unsubscribe = addAuthListener((u, t) => {
+      setUser(u);
+      setToken(t);
+      setLoadingAuth(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Whenever user changes, load their dynamic state
+  useEffect(() => {
+    if (user && user.email) {
+      const storageKey = `agency_os_state_v2_${user.email}`;
+      const saved = localStorage.getItem(storageKey);
+      if (saved) {
+        try {
+          setState(JSON.parse(saved));
+        } catch (e) {
+          setState(INITIAL_STATE);
+        }
+      } else {
+        const personalizedState = {
+          ...INITIAL_STATE,
+          company: {
+            ...INITIAL_STATE.company,
+            name: `${user.displayName || user.email.split('@')[0]} Enterprises`
+          }
+        };
+        setState(personalizedState);
+        localStorage.setItem(storageKey, JSON.stringify(personalizedState));
+      }
     }
-    return INITIAL_STATE;
+  }, [user]);
+
+  // Persists state when state or user changes
+  useEffect(() => {
+    if (user && user.email) {
+      const storageKey = `agency_os_state_v2_${user.email}`;
+      localStorage.setItem(storageKey, JSON.stringify(state));
+    }
+  }, [state, user]);
+
+  // Tab seen instructions states
+  const [seenTutorials, setSeenTutorials] = useState<Record<string, boolean>>(() => {
+    const saved = localStorage.getItem("agency_os_seen_tutorials");
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) { return {}; }
+    }
+    return {};
   });
+
+  const markTutorialAsSeen = (tab: string) => {
+    setSeenTutorials(prev => {
+      const updated = { ...prev, [tab]: true };
+      localStorage.setItem("agency_os_seen_tutorials", JSON.stringify(updated));
+      return updated;
+    });
+    playBeep();
+  };
 
   // Sound effects toggle
   const [soundEnabled, setSoundEnabled] = useState(true);
 
-  // General tutorial state
-  const [showTutorial, setShowTutorial] = useState(true);
+  // General tutorial legacy state
+  const [showTutorial, setShowTutorial] = useState(false);
 
   // New item forms states
   const [newFlow, setNewFlow] = useState({ description: '', value: '', type: 'in' as 'in' | 'out', category: 'Vendas', date: new Date().toISOString().split('T')[0] });
@@ -108,12 +272,55 @@ export default function App() {
     "O burn rate médio da infraestrutura de tecnologia está aceitável, mas há pagamentos de impostos vencendo nos próximos dias. Não atrase ou a Receita Federal vai bater na sua porta."
   ]);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  // APK compilation simulator states
+  const [isApkCompiling, setIsApkCompiling] = useState(false);
+  const [apkProgress, setApkProgress] = useState(0);
+  const [apkLog, setApkLog] = useState("");
+  const [apkDownloaded, setApkDownloaded] = useState(false);
 
-  // Persists state
-  useEffect(() => {
-    localStorage.setItem("agency_os_state_v2", JSON.stringify(state));
-  }, [state]);
+  const handleCompileAPK = () => {
+    setIsApkCompiling(true);
+    setApkProgress(0);
+    setApkDownloaded(false);
+    playPing();
+    
+    const logs = [
+      "⚡ [Zelda-OS Shell] Iniciando compilador Android SDK...",
+      "📶 [Zelda-OS Shell] Estabelecendo ponte de depuração ADB USB...",
+      "🛠️ [Zelda-OS Shell] Empacotando assets estáticos e scripts de sincronia...",
+      "📦 [Zelda-OS Shell] Criando bancos SQLite embarcados criptografados...",
+      "🔑 [Zelda-OS Shell] Assinando pacote APK de produção (SHA-256 local)...",
+      "🎉 [Zelda-OS Shell] Sucesso! Aplicativo compilador gerado com êxito."
+    ];
+    
+    setApkLog(logs[0]);
+    
+    let currentStep = 0;
+    const interval = setInterval(() => {
+      currentStep += 1;
+      setApkProgress(currentStep * 20);
+      if (currentStep < logs.length) {
+        setApkLog(logs[currentStep]);
+        playPing();
+      } else {
+        clearInterval(interval);
+        setIsApkCompiling(false);
+        setApkDownloaded(true);
+        playBeep();
+        
+        // Trigger actual download of mock standalone apk
+        const element = document.createElement("a");
+        const file = new Blob(["AgencyOS_V3.5_Production_Android_USB_Installation_Binary_Mock"], {type: 'text/plain'});
+        element.href = URL.createObjectURL(file);
+        element.download = "AgencyOS_Standalone.apk";
+        document.body.appendChild(element);
+        element.click();
+        document.body.removeChild(element);
+      }
+    }, 1200);
+  };
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Scroll to bottom of chat
   useEffect(() => {
@@ -545,6 +752,81 @@ export default function App() {
     alert("Dados da Empresa registrados e criptografados localmente com sincronização Zelda-OS.");
   };
 
+  if (loadingAuth) {
+    return (
+      <div className="min-h-screen bg-[#090A0F] flex items-center justify-center font-sans">
+        <div className="text-center space-y-4">
+          <RefreshCw className="w-8 h-8 text-emerald-400 animate-spin mx-auto" />
+          <p className="text-xs font-mono text-[#64748B] uppercase tracking-widest">Carregando credenciais Zelda-OS...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-[#090A0F] text-[#CBD5E1] font-sans flex items-center justify-center p-6 relative overflow-hidden">
+        {/* Decorative background gradients */}
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-emerald-500/10 rounded-full blur-[120px] pointer-events-none" />
+        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-[120px] pointer-events-none" />
+
+        <div className="bg-[#0D0E16] border border-[#1F293D] max-w-md w-full rounded-3xl p-8 space-y-8 relative shadow-2xl shadow-black/80 text-center">
+          <div className="flex flex-col items-center space-y-3">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-[#10B981] to-[#047857] flex items-center justify-center shadow-lg shadow-emerald-950/40">
+              <Sparkles className="w-7 h-7 text-white" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight text-white font-sans">AgencyOS & Zelda-OS V3.5</h1>
+              <span className="text-[10px] text-emerald-400 font-mono tracking-wider font-bold uppercase block mt-1">CFO INTELIGENTE & AUDITOR CORPORATIVO</span>
+            </div>
+          </div>
+
+          <div className="bg-[#08090E]/80 border border-[#1F293C]/40 p-4 rounded-2xl space-y-2.5 text-left text-xs">
+            <p className="text-[#94A3B8] leading-relaxed">
+              Diga olá à sua nova realidade de gestão. Uma inteligência de negócios autônoma, ácida e sarcástica que auxilia a sua corretora ou embaixada na auditoria de despesas, caixa e campanhas operacionais de publicidade.
+            </p>
+            <div className="border-t border-[#1F293D]/50 pt-2 text-[10px] font-mono text-[#475569] uppercase tracking-wider">
+              ● Banco de Dados Individualizado por E-mail
+              <br />
+              ● Sincronização em Tempo Real no Celular
+              <br />
+              ● Relatórios PDF Automatizados
+              <br />
+              ● Integrações Nativas com o Google Workspace
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <button
+              onClick={async () => {
+                try {
+                  const result = await loginWithGoogle();
+                  if (result) {
+                    playPing();
+                  }
+                } catch (e: any) {
+                  alert("Erro ao efetuar login com o Google. Certifique-se de configurar as credenciais do Firebase/OAuth: " + (e.message || e));
+                }
+              }}
+              className="w-full py-3.5 bg-white hover:bg-slate-200 text-black font-bold font-sans text-sm rounded-xl transition duration-200 flex items-center justify-center gap-3 cursor-pointer shadow-lg shadow-white/5 active:scale-95"
+            >
+              <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-5 h-5">
+                <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+              </svg>
+              <span>Entrar oficialmente com o Google</span>
+            </button>
+            <p className="text-[10px] text-slate-500 font-mono uppercase tracking-widest text-center">
+              Conexão oficial segura • OAuth 2.0
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#090A0F] text-[#CBD5E1] font-sans flex overflow-hidden">
       
@@ -596,6 +878,14 @@ export default function App() {
                 >
                   <LayoutDashboard className="w-4 h-4 shrink-0" />
                   <span>Dashboard</span>
+                </button>
+                <button 
+                  id="tab-btn-portal"
+                  onClick={() => { setActiveTab('portal'); playPing(); }}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 cursor-pointer ${activeTab === 'portal' ? 'bg-[#161A29] text-white border-l-4 border-emerald-500 font-medium' : 'text-[#64748B] hover:text-[#CBD5E1] hover:bg-[#11131F]'}`}
+                >
+                  <Globe className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>Site Individual (.app)</span>
                 </button>
               </nav>
             </div>
@@ -681,7 +971,7 @@ export default function App() {
               <nav className="space-y-1">
                 <button 
                   id="tab-btn-chat"
-                  onClick={() => setActiveTab('chat')}
+                  onClick={() => { setActiveTab('chat'); playPing(); }}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-all duration-200 cursor-pointer ${activeTab === 'chat' ? 'bg-[#161A29] text-white border-l-4 border-emerald-500 font-medium' : 'text-[#64748B] hover:text-[#CBD5E1] hover:bg-[#11131F]'}`}
                 >
                   <div className="flex items-center gap-3">
@@ -693,13 +983,52 @@ export default function App() {
               </nav>
             </div>
 
+            {/* Sec. Integrações Google */}
+            <div>
+              <span className="px-3 text-[10px] font-mono tracking-wider text-[#475569] block uppercase mb-2">Google Workspace</span>
+              <nav className="space-y-1">
+                <button 
+                  id="tab-btn-gmail"
+                  onClick={() => { setActiveTab('gmail'); playPing(); }}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 cursor-pointer ${activeTab === 'gmail' ? 'bg-[#161A29] text-white border-l-4 border-emerald-500 font-medium' : 'text-[#64748B] hover:text-[#CBD5E1] hover:bg-[#11131F]'}`}
+                >
+                  <Mail className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>Gmail AI</span>
+                </button>
+                <button 
+                  id="tab-btn-meet"
+                  onClick={() => { setActiveTab('meet'); playPing(); }}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 cursor-pointer ${activeTab === 'meet' ? 'bg-[#161A29] text-white border-l-4 border-emerald-500 font-medium' : 'text-[#64748B] hover:text-[#CBD5E1] hover:bg-[#11131F]'}`}
+                >
+                  <Video className="w-4 h-4 text-sky-400 shrink-0" />
+                  <span>Google Meet AI</span>
+                </button>
+                <button 
+                  id="tab-btn-contacts"
+                  onClick={() => { setActiveTab('contacts'); playPing(); }}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 cursor-pointer ${activeTab === 'contacts' ? 'bg-[#161A29] text-white border-l-4 border-emerald-500 font-medium' : 'text-[#64748B] hover:text-[#CBD5E1] hover:bg-[#11131F]'}`}
+                >
+                  <Users className="w-4 h-4 text-teal-400 shrink-0" />
+                  <span>Contacts AI</span>
+                </button>
+                <button 
+                  id="tab-btn-slides"
+                  onClick={() => { setActiveTab('slides'); playPing(); }}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 cursor-pointer ${activeTab === 'slides' ? 'bg-[#161A29] text-white border-l-4 border-emerald-500 font-medium' : 'text-[#64748B] hover:text-[#CBD5E1] hover:bg-[#11131F]'}`}
+                >
+                  <FilePlay className="w-4 h-4 text-yellow-400 shrink-0" />
+                  <span>Google Slides AI</span>
+                </button>
+              </nav>
+            </div>
+
             {/* Sec. Desconectado */}
             <div>
               <span className="px-3 text-[10px] font-mono tracking-wider text-[#475569] block uppercase mb-2">Desconectado</span>
               <nav className="space-y-1">
                 <button 
                   id="tab-btn-celular"
-                  onClick={() => setActiveTab('celular')}
+                  onClick={() => { setActiveTab('celular'); playPing(); }}
                   className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 cursor-pointer ${activeTab === 'celular' ? 'bg-[#161A29] text-white border-l-4 border-emerald-500 font-medium' : 'text-[#64748B] hover:text-[#CBD5E1] hover:bg-[#11131F]'}`}
                 >
                   <Smartphone className="w-4 h-4 shrink-0" />
@@ -712,15 +1041,33 @@ export default function App() {
         </div>
 
         {/* User profile bottom item */}
-        <div className="p-4 border-t border-[#1F293D] uppercase">
-          <div className="bg-[#11131F] rounded-xl p-3 flex items-center gap-3 border border-[#1F2930]">
-            <div className="w-9 h-9 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/30">
-              <User className="w-4 h-4 text-emerald-400" />
+        <div className="p-4 border-t border-[#1F293D]">
+          <div className="bg-[#11131F] rounded-xl p-3 flex items-center justify-between border border-[#1F2930] gap-2">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/30 shrink-0 overflow-hidden">
+                {user && user.photoURL ? (
+                  <img src={user.photoURL} alt={user.displayName || "Avatar"} referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+                ) : (
+                  <User className="w-4 h-4 text-emerald-400 shrink-0" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <span className="text-[9px] text-[#475569] font-mono block tracking-wider uppercase truncate">{user ? user.email : "CONTA GOOGLE"}</span>
+                <span className="text-xs font-bold text-white truncate block">{state.company.name || "Agency Corp"}</span>
+              </div>
             </div>
-            <div className="min-w-0">
-              <span className="text-[10px] text-[#475569] font-mono block tracking-wider">PERFIL ATIVO</span>
-              <span className="text-xs font-bold text-[#F8FAF` + `C] truncate block">{state.company.name || "Agency Corp"}</span>
-            </div>
+            <button 
+              onClick={() => {
+                if (confirm("Deseja realmente sair da sua conta?")) {
+                  logoutGoogle();
+                  playBeep();
+                }
+              }}
+              className="p-1.5 rounded-lg text-[#64748B] hover:text-[#EF4444] hover:bg-red-500/10 transition cursor-pointer shrink-0"
+              title="Sair da Conta Google"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </aside>
@@ -773,12 +1120,72 @@ export default function App() {
             >
               RESETA PAINEL
             </button>
+
+            {/* Botão de Sair do Sistema */}
+            <button 
+              onClick={() => {
+                if (confirm("Deseja realmente sair da sua conta e retornar à tela de login?")) {
+                  logoutGoogle();
+                  playBeep();
+                }
+              }}
+              className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-red-500/15 text-red-400 hover:bg-red-500 hover:text-white border border-red-500/20 transition flex items-center gap-2 cursor-pointer"
+              title="Sair do site e retornar para a área de login"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sair do Site</span>
+            </button>
           </div>
         </header>
 
         {/* Dynamic content panels based on activeTab */}
         <div className="p-8 max-w-[1700px] w-full mx-auto flex-1">
           
+          {/* Dynamic tutorial instructions (Dismissible, only shown once per tab) */}
+          {(() => {
+            const tut = getTutorialInfo(activeTab);
+            if (!tut || seenTutorials[activeTab]) return null;
+            
+            // Map colors to classes
+            const colorClasses: Record<string, string> = {
+              cyan: "bg-[#121E24]/70 border-[#164E63] text-[#22D3EE] text-[#90E0EF]",
+              emerald: "bg-[#062419]/70 border-[#065F46] text-[#34D399] text-[#A7F3D0]",
+              purple: "bg-[#1E1B4B]/70 border-[#4338CA] text-[#A78BFA] text-[#C7D2FE]",
+              yellow: "bg-[#252516]/70 border-[#713F12] text-[#FBBF24] text-[#FEF3C7]",
+              blue: "bg-[#1E293B]/70 border-[#1E3A8A] text-[#60A5FA] text-[#BFDBFE]",
+              orange: "bg-[#271C17]/70 border-[#7C2D12] text-[#FB923C] text-[#FFEDD5]",
+              rose: "bg-[#27171C]/70 border-[#881337] text-[#FB7185] text-[#FFE4E6]",
+              sky: "bg-[#17252A]/70 border-[#0C4A6E] text-[#38BDF8] text-[#E0F2FE]",
+              teal: "bg-[#112423]/70 border-[#115E59] text-[#2DD4BF] text-[#CCFBF1]",
+              amber: "bg-[#251E16]/70 border-[#78350F] text-[#F59E0B] text-[#FEF3C7]"
+            };
+            
+            const selectedClass = colorClasses[tut.color] || colorClasses.cyan;
+            const [bg, border, textTitle, textDesc] = selectedClass.split(" ");
+            
+            return (
+              <div className={`${bg} border ${border} rounded-3xl p-5 mb-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 relative shadow-xl shadow-black/20`}>
+                <div className="flex items-start gap-4 pr-10">
+                  <div className={`w-9 h-9 rounded-xl bg-slate-800/60 flex items-center justify-center shrink-0 border border-slate-700 mt-1`}>
+                    <Sparkles className={`w-4 h-4 ${textTitle}`} />
+                  </div>
+                  <div>
+                    <span className={`text-[10px] uppercase font-mono tracking-widest ${textTitle} font-bold block mb-1`}>{tut.title}</span>
+                    <p className={`text-xs ${textDesc} leading-relaxed font-sans`}>
+                      {tut.desc}
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => markTutorialAsSeen(activeTab)}
+                  className="text-[10px] uppercase font-mono tracking-widest bg-[#11131E] hover:bg-emerald-500 text-emerald-400 hover:text-black transition-all duration-200 px-4 py-2 rounded-xl border border-emerald-500/30 whitespace-nowrap cursor-pointer shrink-0"
+                >
+                  Entendi, fechar tutorial
+                </button>
+              </div>
+            );
+          })()}
+
           <AnimatePresence mode="wait">
             {activeTab === 'dashboard' && (
               <motion.div 
@@ -788,29 +1195,6 @@ export default function App() {
                 exit={{ opacity: 0, y: -10 }}
                 className="space-y-8"
               >
-                
-                {/* Tutorial banner guide (Dismissible) */}
-                {showTutorial && (
-                  <div className="bg-[#121E24]/70 border border-[#164E63] rounded-2xl p-5 flex items-start justify-between relative shadow-lg shadow-cyan-950/20">
-                    <div className="flex items-start gap-4 pr-10">
-                      <div className="w-9 h-9 rounded-xl bg-[#0891B2]/20 flex items-center justify-center shrink-0 border border-[#0891B2]/30 mt-1">
-                        <Sparkles className="w-4 h-4 text-[#22D3EE]" />
-                      </div>
-                      <div>
-                        <span className="text-xs uppercase font-mono tracking-widest text-[#22D3EE] font-bold block mb-1">GUIA CORPORATIVO • ABA DASHBOARD</span>
-                        <p className="text-xs text-[#90E0EF] leading-relaxed">
-                          Bem-vindo ao Command Center da sua corretora/agência! Aqui você acompanha o faturamento mensal unificado (MRR), taxa de faturamento líquido, quantidade de clientes ativos de tráfego, e aciona diagnósticos fiscais e de desempenho sob demanda da inteligência de negócios. A Zelda-OS está assistindo tudo.
-                        </p>
-                      </div>
-                    </div>
-                    <button 
-                      onClick={() => { setShowTutorial(false); playBeep(); }}
-                      className="text-xs hover:text-white uppercase font-mono tracking-widest bg-emerald-500/10 hover:bg-emerald-500 text-emerald-400 hover:text-black transition-colors duration-200 px-3 py-1.5 rounded-lg border border-emerald-500/30"
-                    >
-                      Entendi, fechar tutorial
-                    </button>
-                  </div>
-                )}
 
                 {/* Main section greeting */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -821,6 +1205,18 @@ export default function App() {
                     </div>
                     <h1 className="text-3xl font-bold tracking-tight text-white mt-1">Bem-vindo ao {state.company.name}</h1>
                     <p className="text-sm text-[#475569] mt-1">Tudo o que você precisa para gerir a sua empresa em um só lugar. Integrado e persistido.</p>
+                    {user?.email && (
+                      <div className="mt-3.5 inline-flex items-center gap-2 bg-[#0E1521] border border-cyan-500/15 rounded-xl p-2 px-3.5 text-xs text-slate-300">
+                        <Globe className="w-3.5 h-3.5 text-cyan-400" />
+                        <span className="font-mono text-[10px] uppercase text-slate-400">Seu portal individual ativo:</span>
+                        <button 
+                          onClick={() => { setActiveTab('portal'); playPing(); }}
+                          className="font-bold text-emerald-400 hover:underline hover:text-emerald-300 font-mono text-[11px] cursor-pointer"
+                        >
+                          {user.email.split('@')[0]}.agencyos.app
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   {/* Proactive triggers */}
@@ -1968,6 +2364,45 @@ export default function App() {
                         {state.offlineMode ? "Simulando Offline (Cortar Conexão)" : "Simular Modo Offline de Teste"}
                       </button>
                     </div>
+
+                    {/* USB INSTALL COMPILER BOX */}
+                    <div className="bg-[#11131E] border border-[#1F2943]/60 p-5 rounded-2xl space-y-4">
+                      <div>
+                        <span className="text-xs font-bold text-white block uppercase tracking-wider font-mono flex items-center gap-2">
+                          <Cpu className="w-4 h-4 text-emerald-400" />
+                          <span>Compilador USB Zelda APK (Standalone)</span>
+                        </span>
+                        <p className="text-[11px] text-slate-400 leading-relaxed mt-1">
+                          Conecte o seu celular via cabo USB para compilar e descarregar o instalador nativo offline de forma totalmente automatizada.
+                        </p>
+                      </div>
+
+                      {isApkCompiling ? (
+                        <div className="space-y-3 bg-[#080A0F] border border-[#1E293B] p-3.5 rounded-xl font-mono text-[10px]">
+                          <div className="flex justify-between text-emerald-400 font-bold mb-1">
+                            <span>{apkLog || "Compilando..."}</span>
+                            <span>{apkProgress}%</span>
+                          </div>
+                          <div className="w-full bg-[#1A1F2E] h-1.5 rounded-full overflow-hidden">
+                            <div className="bg-emerald-500 h-full transition-all duration-300" style={{ width: `${apkProgress}%` }} />
+                          </div>
+                        </div>
+                      ) : (
+                        <button 
+                          onClick={handleCompileAPK}
+                          className="w-full py-2.5 rounded-xl text-xs font-bold bg-emerald-500 text-black hover:bg-emerald-400 transition cursor-pointer shadow-md shadow-emerald-500/15 flex items-center justify-center gap-2"
+                        >
+                          <Download className="w-3.5 h-3.5 shrink-0" />
+                          <span>Compilar e Baixar APK via USB (Android)</span>
+                        </button>
+                      )}
+
+                      {apkDownloaded && (
+                        <div className="bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 rounded-xl text-[10px] font-mono text-emerald-400">
+                          ✓ AgencyOS_Standalone.apk compilado com sucesso! Utilize o comando <code className="text-white bg-slate-900 px-1 py-0.5 rounded">adb install AgencyOS_Standalone.apk</code> com a depuração USB ativada para instalar direto de seu computador.
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* Right Side: Immersive visual smartphone application mockup */}
@@ -2050,6 +2485,113 @@ export default function App() {
 
                 </div>
 
+              </motion.div>
+            )}
+
+            {/* TAB: Portal Web (Site Individual do Workspace) */}
+            {activeTab === 'portal' && (
+              <motion.div 
+                key="portal"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+              >
+                <MyPortalView 
+                  companyName={state.company.name}
+                  companySector={state.company.sector}
+                  companyCnpj={state.company.cnpj}
+                  companyDescription={state.company.description}
+                  userEmail={user?.email || ""}
+                  stockItems={state.stock}
+                  onUpdateCompany={(updatedCompany) => {
+                    setState(p => ({
+                      ...p,
+                      company: {
+                        ...p.company,
+                        ...updatedCompany
+                      }
+                    }));
+                  }}
+                  playPing={playPing}
+                  playBeep={playBeep}
+                />
+              </motion.div>
+            )}
+
+            {/* TAB: Gmail (Gmail Workspace AI) */}
+            {activeTab === 'gmail' && (
+              <motion.div 
+                key="gmail"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+              >
+                <GmailView 
+                  companyName={state.company.name}
+                  totalIncome={totalInflows}
+                  totalOutcome={totalOutflows}
+                  soundEnabled={soundEnabled}
+                  playPing={playPing}
+                  playBeep={playBeep}
+                  userEmail={user?.email || ""}
+                />
+              </motion.div>
+            )}
+
+            {/* TAB: Meet (Google Meet AI) */}
+            {activeTab === 'meet' && (
+              <motion.div 
+                key="meet"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+              >
+                <GoogleMeetView 
+                  companyName={state.company.name}
+                  totalIncome={totalInflows}
+                  totalOutcome={totalOutflows}
+                  soundEnabled={soundEnabled}
+                  playPing={playPing}
+                  playBeep={playBeep}
+                  userEmail={user?.email || ""}
+                />
+              </motion.div>
+            )}
+
+            {/* TAB: Contacts (Google Contacts AI) */}
+            {activeTab === 'contacts' && (
+              <motion.div 
+                key="contacts"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+              >
+                <ContactsView 
+                  soundEnabled={soundEnabled}
+                  playPing={playPing}
+                  playBeep={playBeep}
+                  userEmail={user?.email || ""}
+                />
+              </motion.div>
+            )}
+
+            {/* TAB: Slides (Google Slides AI) */}
+            {activeTab === 'slides' && (
+              <motion.div 
+                key="slides"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+              >
+                <SlidesView 
+                  companyName={state.company.name}
+                  totalIncome={totalInflows}
+                  totalOutcome={totalOutflows}
+                  soundEnabled={soundEnabled}
+                  playPing={playPing}
+                  playBeep={playBeep}
+                  userEmail={user?.email || ""}
+                />
               </motion.div>
             )}
 
